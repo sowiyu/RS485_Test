@@ -64,19 +64,32 @@ namespace RS485_WinForms_Improved
         private readonly MaterialSkinManager materialSkinManager;
         private SerialPort serialPort;
 
+        // --- 수신 데이터 조각을 모으기 위한 버퍼 ---
+        private List<byte> receiveBuffer = new List<byte>();
+
         // UI 컨트롤 선언
         private ComboBox cmbPort;
         private Button btnConnect, btnDisconnect, btnRefresh;
         private DataGridView dgvCommands;
         private RichTextBox txtLog;
-        private TextBox txtCustomData; // 사용자 입력 텍스트박스
-        private Button btnSendCustomData; // 사용자 입력 전송 버튼
+        private TextBox txtCustomData;
+        private Button btnSendCustomData;
 
-        // 프로토콜 상수 정의 (엑셀 시트 기반)
-        private const byte STX = 0x22;
-        private const byte ETX = 0x33; // 사용자 코드 참고하여 0x33으로 수정
-        private const byte ADDR = 0x03;
-        private const byte CMD = 0x85;
+        // --- 상태 분석 UI 컨트롤 ---
+        private Label[] lblDataBytes = new Label[9];
+        private Label[] lblDataHex = new Label[9];
+        private Label[] lblDataBin = new Label[9];
+
+        // 프로토콜 상수 정의 (명령 전송용)
+        private const byte SEND_STX = 0x22;
+        private const byte SEND_ETX = 0x33;
+        private const byte SEND_ADDR = 0x03;
+        private const byte SEND_CMD = 0x85;
+
+        // 프로토콜 상수 정의 (상태 수신용)
+        private const byte RECV_STX = 0x44;
+        private const int PACKET_LENGTH = 16;
+
 
         public RS485_ImprovedForm()
         {
@@ -97,8 +110,8 @@ namespace RS485_WinForms_Improved
 
         private void InitializeComponent()
         {
-            this.Text = "RS-485 제어 프로그램";
-            this.ClientSize = new System.Drawing.Size(800, 600);
+            this.Text = "RS-485 제어 및 프로토콜 분석 도구";
+            this.ClientSize = new System.Drawing.Size(900, 640);
 
             // 포트 선택
             var lblPort = new Label { Text = "COM 포트:", Location = new Point(20, 80), AutoSize = true };
@@ -115,9 +128,9 @@ namespace RS485_WinForms_Improved
             // 명령어 그리드
             dgvCommands = new DataGridView
             {
-                Location = new Point(20, 130),
-                Width = 760,
-                Height = 250,
+                Location = new Point(20, 120),
+                Width = 550,
+                Height = 300,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
                 ReadOnly = true,
@@ -127,10 +140,10 @@ namespace RS485_WinForms_Improved
             };
             dgvCommands.CellContentClick += DgvCommands_CellContentClick;
 
-            // --- 사용자 정의 데이터 입력 UI 추가 ---
-            var lblCustomData = new Label { Text = "사용자 정의 데이터 (9-byte hex, 공백으로 구분):", Location = new Point(20, 390), AutoSize = true };
-            txtCustomData = new TextBox { Location = new Point(20, 410), Width = 650, Font = new Font("Consolas", 9) };
-            btnSendCustomData = new Button { Text = "사용자 전송", Location = new Point(680, 408), Width = 100 };
+            // --- 사용자 정의 데이터 입력 UI ---
+            var lblCustomData = new Label { Text = "사용자 정의 데이터 (9-byte hex, 공백으로 구분):", Location = new Point(20, 430), AutoSize = true };
+            txtCustomData = new TextBox { Location = new Point(20, 450), Width = 440, Font = new Font("Consolas", 9) };
+            btnSendCustomData = new Button { Text = "사용자 전송", Location = new Point(470, 448), Width = 100 };
             btnSendCustomData.Click += BtnSendCustomData_Click;
 
             // 로그 창
@@ -138,11 +151,28 @@ namespace RS485_WinForms_Improved
             {
                 ReadOnly = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical,
-                Location = new Point(20, 450),
-                Width = 760,
-                Height = 130,
+                Location = new Point(20, 490),
+                Width = 860,
+                Height = 330,
                 Font = new Font("Consolas", 9)
             };
+
+            // --- 실시간 상태 분석 UI ---
+            var analysisGroup = new GroupBox { Text = "실시간 상태 분석 (수신 DATA)", Location = new Point(580, 120), Width = 300, Height = 360 };
+            var fontBold = new Font("Consolas", 10, FontStyle.Bold);
+            var fontRegular = new Font("Consolas", 10);
+
+            for (int i = 0; i < 9; i++)
+            {
+                int yPos = 30 + (i * 35);
+                lblDataBytes[i] = new Label { Text = $"Data[{i}]:", Location = new Point(15, yPos), Font = fontBold, AutoSize = true };
+                lblDataHex[i] = new Label { Text = "00", Location = new Point(100, yPos), Font = fontRegular, ForeColor = Color.Blue, AutoSize = true };
+                lblDataBin[i] = new Label { Text = "00000000", Location = new Point(150, yPos), Font = fontRegular, ForeColor = Color.DarkGreen, AutoSize = true };
+
+                analysisGroup.Controls.Add(lblDataBytes[i]);
+                analysisGroup.Controls.Add(lblDataHex[i]);
+                analysisGroup.Controls.Add(lblDataBin[i]);
+            }
 
             // 컨트롤들을 폼에 추가
             this.Controls.Add(lblPort);
@@ -155,11 +185,12 @@ namespace RS485_WinForms_Improved
             this.Controls.Add(txtCustomData);
             this.Controls.Add(btnSendCustomData);
             this.Controls.Add(txtLog);
+            this.Controls.Add(analysisGroup);
         }
 
         private void InitializeCommandGrid()
         {
-            // 엑셀 시트에 정의된 명령어 목록 (엑셀 시트와 정확히 일치하도록 수정)
+            // '쓰기'를 위한 명령어 목록 (STX=0x22 프로토콜)
             var commands = new List<CommandData>
             {
                 new CommandData { Description = "이젝터 1 진공", Data = new byte[] { 0, 0x01, 0, 0, 0, 0, 0, 0, 0 } },
@@ -188,7 +219,6 @@ namespace RS485_WinForms_Improved
                 new CommandData { Description = "실린더 6 전진", Data = new byte[] { 0, 0, 0, 0x80, 0, 0, 0, 0, 0 } },
             };
 
-            // DataGridView 설정
             dgvCommands.DataSource = commands;
             dgvCommands.Columns["Description"].HeaderText = "명령 설명";
             dgvCommands.Columns["Data"].Visible = false;
@@ -208,10 +238,8 @@ namespace RS485_WinForms_Improved
         {
             cmbPort.Items.Clear();
             cmbPort.Items.AddRange(SerialPort.GetPortNames());
-            if (cmbPort.Items.Count > 0)
-                cmbPort.SelectedIndex = 0;
-            else
-                cmbPort.Text = "포트 없음";
+            if (cmbPort.Items.Count > 0) cmbPort.SelectedIndex = 0;
+            else cmbPort.Text = "포트 없음";
         }
 
         private void BtnConnect_Click(object sender, EventArgs e)
@@ -269,32 +297,27 @@ namespace RS485_WinForms_Improved
             if (serialPort == null || !serialPort.IsOpen) { Log("⚠ 포트가 열려있지 않습니다.", Color.Red); return; }
             try
             {
-                // 패킷 구조: [STX][Byte][ADDR][CMD][DATA(9)][CRC(2)][ETX]
-                // 전체 길이: 1 + 1 + 1 + 1 + 9 + 2 + 1 = 16 bytes
                 byte[] packet = new byte[16];
                 byte[] data = command.Data;
 
-                // CRC 계산을 위한 데이터 배열 (Byte + ADDR + CMD + DATA) = 12 bytes
                 byte[] crcData = new byte[12];
-                crcData[0] = 0x10; // Byte 필드
-                crcData[1] = ADDR;
-                crcData[2] = CMD;
+                crcData[0] = 0x10;
+                crcData[1] = SEND_ADDR;
+                crcData[2] = SEND_CMD;
                 Buffer.BlockCopy(data, 0, crcData, 3, data.Length);
 
-                // CRC-16/BUYPASS (Table-lookup) 계산
                 ushort crcValue = Crc16Buypass.ComputeChecksum(crcData);
                 byte crcHigh = (byte)((crcValue >> 8) & 0xFF);
                 byte crcLow = (byte)(crcValue & 0xFF);
 
-                // 패킷 조립
-                packet[0] = STX;
+                packet[0] = SEND_STX;
                 packet[1] = 0x10;
-                packet[2] = ADDR;
-                packet[3] = CMD;
-                Buffer.BlockCopy(data, 0, packet, 4, data.Length); // Data (인덱스 4~12)
-                packet[13] = crcHigh; // CRC High Byte (인덱스 13)
-                packet[14] = crcLow;  // CRC Low Byte (인덱스 14)
-                packet[15] = ETX;     // ETX (인덱스 15)
+                packet[2] = SEND_ADDR;
+                packet[3] = SEND_CMD;
+                Buffer.BlockCopy(data, 0, packet, 4, data.Length);
+                packet[13] = crcHigh;
+                packet[14] = crcLow;
+                packet[15] = SEND_ETX;
 
                 serialPort.Write(packet, 0, packet.Length);
                 Log($"📤 [{command.Description}] 전송: {BitConverter.ToString(packet).Replace("-", " ")}", Color.Blue);
@@ -311,10 +334,43 @@ namespace RS485_WinForms_Improved
                 {
                     byte[] buffer = new byte[bytesToRead];
                     serialPort.Read(buffer, 0, bytesToRead);
-                    this.Invoke((MethodInvoker)delegate { Log($"📥 수신: {BitConverter.ToString(buffer).Replace("-", " ")}", Color.DarkGreen); });
+
+                    receiveBuffer.AddRange(buffer);
+
+                    this.Invoke((MethodInvoker)delegate {
+                        while (receiveBuffer.Count >= PACKET_LENGTH)
+                        {
+                            int packetStartIndex = receiveBuffer.FindIndex(b => b == RECV_STX);
+                            if (packetStartIndex == -1) { receiveBuffer.Clear(); return; }
+                            if (packetStartIndex > 0) { receiveBuffer.RemoveRange(0, packetStartIndex); }
+                            if (receiveBuffer.Count < PACKET_LENGTH) { break; }
+
+                            byte[] completePacket = receiveBuffer.GetRange(0, PACKET_LENGTH).ToArray();
+                            Log($"📥 수신: {BitConverter.ToString(completePacket).Replace("-", " ")}", Color.DarkGreen);
+
+                            ParseReceivedData(completePacket);
+
+                            receiveBuffer.RemoveRange(0, PACKET_LENGTH);
+                        }
+                    });
                 }
             }
             catch (Exception ex) { this.Invoke((MethodInvoker)delegate { Log($"❌ 수신 오류: {ex.Message}", Color.Red); }); }
+        }
+
+        /// <summary>
+        /// 수신된 데이터 패킷을 분석하여 UI에 Hex와 Binary 값으로 표시합니다.
+        /// </summary>
+        private void ParseReceivedData(byte[] packet)
+        {
+            byte[] data = new byte[9];
+            Buffer.BlockCopy(packet, 4, data, 0, 9);
+
+            for (int i = 0; i < 9; i++)
+            {
+                lblDataHex[i].Text = data[i].ToString("X2");
+                lblDataBin[i].Text = Convert.ToString(data[i], 2).PadLeft(8, '0');
+            }
         }
 
         private void Log(string message, Color color)

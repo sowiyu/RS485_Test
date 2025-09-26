@@ -1,3 +1,4 @@
+using RS485_WinForms_Improved;
 namespace RS485_WinForms
 {
     internal static class Program
@@ -9,7 +10,7 @@ namespace RS485_WinForms
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new RS485_protocol());
+            Application.Run(new RS485_ImprovedForm());
         }
     }
 }

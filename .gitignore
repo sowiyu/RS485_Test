@@ -1,0 +1,10 @@
+# Visual Studio/Rider cache
+.vs/
+
+# Build results
+[Bb]in/
+[Oo]bj/
+
+# User-specific files
+*.csproj.user
+*.suo

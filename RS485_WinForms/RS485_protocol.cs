@@ -74,6 +74,7 @@ namespace RS485_WinForms_Improved
 
         // --- 자동 모드 트리거 신호 정의 ---
         private readonly byte[] triggerSignal1 = { 0x44, 0x10, 0x03, 0x85, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFA, 0x12, 0x00, 0x00, 0x1B, 0x99, 0x55 };
+        private readonly byte[] triggerSignal2 = { 0x44, 0x10, 0x03, 0x85, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFA, 0x02, 0x04, 0x00, 0x02, 0xD9, 0x55 };
 
         // --- 수신 데이터 조각을 모으기 위한 버퍼 ---
         private List<byte> receiveBuffer = new List<byte>();
@@ -86,8 +87,10 @@ namespace RS485_WinForms_Improved
         private TextBox txtCustomData;
         private Button btnSendCustomData;
         private Button btnStartAutoMode, btnStopAutoMode;
-        private GroupBox sendGroup;
+        private GroupBox sendGroup, simulationGroup;
         private Label lblLastPacket;
+        private TextBox txtSimulatedReceive;
+        private Button btnProcessSimulatedReceive;
 
         // --- 상태 분석 UI 컨트롤 ---
         private Label[] lblDataBytes = new Label[9];
@@ -103,6 +106,8 @@ namespace RS485_WinForms_Improved
         // 프로토콜 상수 정의 (상태 수신용)
         private const byte RECV_STX = 0x44;
         private const int PACKET_LENGTH = 16;
+        private byte[] lastLoggedPacket = null;
+
 
 
         public RS485_ImprovedForm()
@@ -120,7 +125,7 @@ namespace RS485_WinForms_Improved
 
             LoadPorts();
             InitializeCommandGrid();
-            InitializePollingTimer(); // 폴링 타이머 초기화
+            InitializePollingTimer();
         }
 
         private void InitializePollingTimer()
@@ -151,7 +156,6 @@ namespace RS485_WinForms_Improved
                     }
                 }
 
-                // 어떤 자동 모드든 Idle 상태이거나, 실행 중인 모드가 아니면 기본 상태 요청
                 if (commandToSend == null)
                 {
                     commandToSend = new CommandData { Description = "상태 요청 (Polling)", Data = new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
@@ -164,26 +168,22 @@ namespace RS485_WinForms_Improved
         private void InitializeComponent()
         {
             this.Text = "RS-485 자동화 제어 프로그램";
-            this.ClientSize = new System.Drawing.Size(900, 850);
+            this.ClientSize = new System.Drawing.Size(900, 960);
 
-            // 포트 선택
             var lblPort = new Label { Text = "COM 포트:", Location = new Point(20, 80), AutoSize = true };
             cmbPort = new ComboBox { Location = new Point(100, 78), Width = 120 };
             btnRefresh = new Button { Text = "새로고침", Location = new Point(230, 76), Width = 80 };
             btnRefresh.Click += (s, e) => LoadPorts();
-
-            // 연결/해제 버튼
             btnConnect = new Button { Text = "연결", Location = new Point(320, 76), Width = 100 };
             btnConnect.Click += BtnConnect_Click;
             btnDisconnect = new Button { Text = "해제", Location = new Point(430, 76), Width = 100 };
             btnDisconnect.Click += BtnDisconnect_Click;
 
-            // 명령어 그리드
             dgvCommands = new DataGridView
             {
                 Location = new Point(20, 120),
                 Width = 550,
-                Height = 300,
+                Height = 250,
                 AllowUserToAddRows = false,
                 ReadOnly = true,
                 RowHeadersVisible = false,
@@ -192,8 +192,7 @@ namespace RS485_WinForms_Improved
             };
             dgvCommands.CellContentClick += DgvCommands_CellContentClick;
 
-            // --- 자동 모드 UI (통합) ---
-            var autoModeGroup = new GroupBox { Text = "자동 모드 (핸드툴 1 & 2)", Location = new Point(20, 430), Width = 550, Height = 55 };
+            var autoModeGroup = new GroupBox { Text = "자동 모드 (핸드툴 1 & 2)", Location = new Point(20, 380), Width = 550, Height = 55 };
             btnStartAutoMode = new Button { Text = "시작", Location = new Point(15, 20), Width = 150 };
             btnStartAutoMode.Click += BtnStartAutoMode_Click;
             btnStopAutoMode = new Button { Text = "중지", Location = new Point(180, 20), Width = 150, Enabled = false };
@@ -201,8 +200,7 @@ namespace RS485_WinForms_Improved
             autoModeGroup.Controls.Add(btnStartAutoMode);
             autoModeGroup.Controls.Add(btnStopAutoMode);
 
-            // --- 추가 명령 전송 UI ---
-            sendGroup = new GroupBox { Text = "추가 명령 전송", Location = new Point(20, 490), Width = 550, Height = 100 };
+            sendGroup = new GroupBox { Text = "추가 명령 전송", Location = new Point(20, 440), Width = 550, Height = 100 };
             var lblCustomData = new Label { Text = "전체 패킷 직접 전송 (16-byte hex, 공백으로 구분):", Location = new Point(15, 25), AutoSize = true };
             txtCustomData = new TextBox { Location = new Point(15, 45), Width = 400, Font = new Font("Consolas", 9) };
             btnSendCustomData = new Button { Text = "사용자 전송", Location = new Point(425, 43), Width = 100 };
@@ -211,18 +209,26 @@ namespace RS485_WinForms_Improved
             sendGroup.Controls.Add(txtCustomData);
             sendGroup.Controls.Add(btnSendCustomData);
 
-            // 로그 창
+            // --- 수신 시뮬레이션 UI 추가 ---
+            simulationGroup = new GroupBox { Text = "수신 시뮬레이션", Location = new Point(20, 545), Width = 550, Height = 75 };
+            var lblSim = new Label { Text = "수신된 것처럼 처리할 16-byte hex 패킷:", Location = new Point(15, 20), AutoSize = true };
+            txtSimulatedReceive = new TextBox { Location = new Point(15, 40), Width = 400, Font = new Font("Consolas", 9) };
+            btnProcessSimulatedReceive = new Button { Text = "수신 처리", Location = new Point(425, 38), Width = 100 };
+            btnProcessSimulatedReceive.Click += BtnProcessSimulatedReceive_Click;
+            simulationGroup.Controls.Add(lblSim);
+            simulationGroup.Controls.Add(txtSimulatedReceive);
+            simulationGroup.Controls.Add(btnProcessSimulatedReceive);
+
             txtLog = new RichTextBox
             {
                 ReadOnly = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical,
-                Location = new Point(20, 600),
+                Location = new Point(20, 625),
                 Width = 860,
-                Height = 230,
+                Height = 265,
                 Font = new Font("Consolas", 9)
             };
 
-            // --- 실시간 상태 분석 UI ---
             var analysisGroup = new GroupBox { Text = "실시간 상태 분석", Location = new Point(580, 120), Width = 300, Height = 470 };
             var fontBold = new Font("Consolas", 10, FontStyle.Bold);
             var fontRegular = new Font("Consolas", 10);
@@ -242,7 +248,7 @@ namespace RS485_WinForms_Improved
 
             this.Controls.Add(lblPort); this.Controls.Add(cmbPort); this.Controls.Add(btnRefresh);
             this.Controls.Add(btnConnect); this.Controls.Add(btnDisconnect); this.Controls.Add(dgvCommands);
-            this.Controls.Add(autoModeGroup); this.Controls.Add(sendGroup);
+            this.Controls.Add(autoModeGroup); this.Controls.Add(sendGroup); this.Controls.Add(simulationGroup);
             this.Controls.Add(txtLog); this.Controls.Add(analysisGroup);
         }
 
@@ -372,6 +378,21 @@ namespace RS485_WinForms_Improved
             catch (Exception ex) { Log($"❌ 데이터 변환 오류: {ex.Message}", Color.Red); }
         }
 
+        private void BtnProcessSimulatedReceive_Click(object sender, EventArgs e)
+        {
+            string inputText = txtSimulatedReceive.Text.Trim();
+            if (string.IsNullOrEmpty(inputText)) { Log("⚠ 시뮬레이션할 데이터를 입력하세요.", Color.Orange); return; }
+            string[] hexValues = inputText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (hexValues.Length != 16) { Log($"❌ 데이터는 반드시 16-byte여야 합니다. (입력된 바이트: {hexValues.Length})", Color.Red); return; }
+            try
+            {
+                byte[] fullPacket = hexValues.Select(hex => Convert.ToByte(hex, 16)).ToArray();
+                ProcessPacket(fullPacket, true);
+            }
+            catch (FormatException) { Log("❌ 잘못된 Hex 값 형식입니다.", Color.Red); }
+            catch (Exception ex) { Log($"❌ 데이터 변환 오류: {ex.Message}", Color.Red); }
+        }
+
         private void SendPacket(CommandData command)
         {
             if (serialPort == null || !serialPort.IsOpen) { return; }
@@ -414,15 +435,7 @@ namespace RS485_WinForms_Improved
                             if (packetStartIndex > 0) { receiveBuffer.RemoveRange(0, packetStartIndex); }
                             if (receiveBuffer.Count < PACKET_LENGTH) { break; }
                             byte[] completePacket = receiveBuffer.GetRange(0, PACKET_LENGTH).ToArray();
-                            string packetString = BitConverter.ToString(completePacket).Replace("-", " ");
-                            Log($"📥 수신: {packetString}", Color.DarkGreen);
-                            UpdateAnalysisUI(completePacket);
-                            UpdateLastPacketLabel(packetString);
-                            if (isAutoModeRunning)
-                            {
-                                HandleAutoMode1(completePacket);
-                                HandleAutoMode2(completePacket);
-                            }
+                            ProcessPacket(completePacket);
                             receiveBuffer.RemoveRange(0, PACKET_LENGTH);
                         }
                     });
@@ -431,11 +444,29 @@ namespace RS485_WinForms_Improved
             catch (Exception ex) { this.Invoke((MethodInvoker)delegate { Log($"❌ 수신 오류: {ex.Message}", Color.Red); }); }
         }
 
+        private void ProcessPacket(byte[] packet, bool isSimulation = false)
+        {
+            string packetString = BitConverter.ToString(packet).Replace("-", " ");
+            string logPrefix = isSimulation ? "📥 수신 (시뮬레이션):" : "📥 수신:";
+            Log($"📥 수신: {packetString}", Color.DarkGreen);
+            if (lastLoggedPacket == null || !packet.SequenceEqual(lastLoggedPacket))
+            {
+                Log($"📥 수신: {packetString}", Color.DarkGreen);
+                lastLoggedPacket = packet; // 마지막 로그 값을 현재 값으로 업데이트
+            }
+
+            UpdateAnalysisUI(packet);
+            UpdateLastPacketLabel(packetString);
+            if (isAutoModeRunning)
+            {
+                HandleAutoMode1(packet);
+                HandleAutoMode2(packet);
+            }
+        }
+
         private void HandleAutoMode1(byte[] currentPacket)
         {
-            // 다른 모드가 동작 중일 때는 실행하지 않음
             if (currentAutoModeState2 != AutoModeState.Idle) return;
-
             switch (currentAutoModeState1)
             {
                 case AutoModeState.Idle:
@@ -474,15 +505,12 @@ namespace RS485_WinForms_Improved
 
         private void HandleAutoMode2(byte[] currentPacket)
         {
-            // 다른 모드가 동작 중일 때는 실행하지 않음
             if (currentAutoModeState1 != AutoModeState.Idle) return;
-
             byte triggerByte = currentPacket[10]; // Data[6]
-
             switch (currentAutoModeState2)
             {
                 case AutoModeState.Idle:
-                    if (triggerByte == 0x04)
+                    if (currentPacket.SequenceEqual(triggerSignal2))
                     {
                         Log("✨ 핸드툴 1차 눌림 감지! (모드2)", Color.Tomato);
                         SendPacket(new CommandData { Description = "이젝터 5+6 동시 진공", Data = new byte[] { 0, 0, 0x05, 0, 0, 0, 0, 0, 0 } });
@@ -490,14 +518,14 @@ namespace RS485_WinForms_Improved
                     }
                     break;
                 case AutoModeState.VacuumsOn:
-                    if (triggerByte != 0x04)
+                    if (!currentPacket.SequenceEqual(triggerSignal2))
                     {
                         Log("...핸드툴 릴리즈 감지. (모드2)", Color.LightSalmon);
                         currentAutoModeState2 = AutoModeState.ReadyForBreak;
                     }
                     break;
                 case AutoModeState.ReadyForBreak:
-                    if (triggerByte == 0x04)
+                    if (currentPacket.SequenceEqual(triggerSignal2))
                     {
                         Log("✨ 핸드툴 2차 눌림 감지! (모드2)", Color.Tomato);
                         currentAutoModeState2 = AutoModeState.Breaking;

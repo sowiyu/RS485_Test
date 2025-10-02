@@ -259,8 +259,8 @@ namespace RS485_WinForms_Improved
                 new CommandData { Description = "🚨 전체 정지", Data = new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "이젝터 1 진공", Data = new byte[] { 0, 0x01, 0, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "이젝터 1 파기", Data = new byte[] { 0, 0x02, 0, 0, 0, 0, 0, 0, 0 } },
-                new CommandData { Description = "이젝터 2 진공", Data = new byte[] { 0, 0x04, 0, 0, 0, 0, 0, 0, 0 } },
-                new CommandData { Description = "이젝터 2 파기", Data = new byte[] { 0, 0x08, 0, 0, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "이젝터 2 진공(로봇)", Data = new byte[] { 0, 0x04, 0, 0, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "이젝터 2 파기(로봇)", Data = new byte[] { 0, 0x08, 0, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "이젝터 3 진공", Data = new byte[] { 0, 0x10, 0, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "이젝터 3 파기", Data = new byte[] { 0, 0x20, 0, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "이젝터 4 진공", Data = new byte[] { 0, 0x40, 0, 0, 0, 0, 0, 0, 0 } },
@@ -275,6 +275,16 @@ namespace RS485_WinForms_Improved
                 new CommandData { Description = "이젝터 5+6 동시 파기", Data = new byte[] { 0, 0, 0x0A, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "실린더 1 후진", Data = new byte[] { 0, 0, 0x10, 0, 0, 0, 0, 0, 0 } },
                 new CommandData { Description = "실린더 1 전진", Data = new byte[] { 0, 0, 0x20, 0, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 2 후진", Data = new byte[] { 0, 0, 0x40, 0, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 2 전진", Data = new byte[] { 0, 0, 0x80, 0, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 3 후진(비전)", Data = new byte[] { 0, 0, 0, 0x01, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 3 전진(비전)", Data = new byte[] { 0, 0, 0, 0x02, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 4 후진(비전)", Data = new byte[] { 0, 0, 0, 0x04, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 4 전진(비전)", Data = new byte[] { 0, 0, 0, 0x08, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 5 UP",   Data = new byte[] { 0, 0, 0, 0x10, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 5 DOWN", Data = new byte[] { 0, 0, 0, 0x20, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 6 후진", Data = new byte[] { 0, 0, 0, 0x40, 0, 0, 0, 0, 0 } },
+                new CommandData { Description = "실린더 6 전진", Data = new byte[] { 0, 0, 0, 0x80, 0, 0, 0, 0, 0 } },
             };
             dgvCommands.DataSource = commands;
             dgvCommands.Columns["Description"].HeaderText = "명령 설명";
@@ -303,6 +313,8 @@ namespace RS485_WinForms_Improved
                 serialPort.Open();
                 Log($"✅ {serialPort.PortName} 포트가 연결되었습니다.", Color.Green);
                 lblLastPacket.Text = "신호 대기 중...";
+                btnConnect.Enabled = false;
+                btnDisconnect.Enabled = true;
             }
             catch (Exception ex) { Log($"❌ 연결 실패: {ex.Message}", Color.Red); }
         }
@@ -316,6 +328,8 @@ namespace RS485_WinForms_Improved
                 serialPort.Close();
                 Log($"🔌 {serialPort.PortName} 포트가 해제되었습니다.", Color.Black);
                 lblLastPacket.Text = "연결 해제됨";
+                btnConnect.Enabled = true;
+                btnDisconnect.Enabled = false;
             }
             catch (Exception ex) { Log($"❌ 해제 실패: {ex.Message}", Color.Red); }
         }
@@ -363,7 +377,7 @@ namespace RS485_WinForms_Improved
             string inputText = txtCustomData.Text.Trim();
             if (string.IsNullOrEmpty(inputText)) { Log("⚠ 전송할 데이터를 입력하세요.", Color.Orange); return; }
             string[] hexValues = inputText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (hexValues.Length != 16) { Log($"❌ 데이터는 반드시 16-byte여야 합니다. (입력된 바이트: {hexValues.Length})", Color.Red); return; }
+            if (hexValues.Length != 16) { Log($"❌ 데이터는 반드시 16-byte여야 합니다.", Color.Red); return; }
             try
             {
                 byte[] fullPacket = hexValues.Select(hex => Convert.ToByte(hex, 16)).ToArray();
@@ -383,7 +397,7 @@ namespace RS485_WinForms_Improved
             string inputText = txtSimulatedReceive.Text.Trim();
             if (string.IsNullOrEmpty(inputText)) { Log("⚠ 시뮬레이션할 데이터를 입력하세요.", Color.Orange); return; }
             string[] hexValues = inputText.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (hexValues.Length != 16) { Log($"❌ 데이터는 반드시 16-byte여야 합니다. (입력된 바이트: {hexValues.Length})", Color.Red); return; }
+            if (hexValues.Length != 16) { Log($"❌ 데이터는 반드시 16-byte여야 합니다.", Color.Red); return; }
             try
             {
                 byte[] fullPacket = hexValues.Select(hex => Convert.ToByte(hex, 16)).ToArray();
@@ -409,10 +423,12 @@ namespace RS485_WinForms_Improved
                 packet[13] = (byte)((crcValue >> 8) & 0xFF); packet[14] = (byte)(crcValue & 0xFF);
                 packet[15] = SEND_ETX;
                 serialPort.Write(packet, 0, packet.Length);
-                if (command.Description.Contains("Polling") == false && command.Description.Contains("유지") == false)
-                {
-                    Log($"📤 [{command.Description}] 전송: {BitConverter.ToString(packet).Replace("-", " ")}", Color.Blue);
-                }
+
+                // 로그 필터링
+                // if (command.Description.Contains("Polling") == false && command.Description.Contains("유지") == false)
+                // {
+                Log($"📤 [{command.Description}] 전송: {BitConverter.ToString(packet).Replace("-", " ")}", Color.Blue);
+                // }
             }
             catch (Exception ex) { Log($"❌ 전송 실패: {ex.Message}", Color.Red); }
         }
@@ -447,12 +463,13 @@ namespace RS485_WinForms_Improved
         private void ProcessPacket(byte[] packet, bool isSimulation = false)
         {
             string packetString = BitConverter.ToString(packet).Replace("-", " ");
-            string logPrefix = isSimulation ? "📥 수신 (시뮬레이션):" : "📥 수신:";
-            Log($"📥 수신: {packetString}", Color.DarkGreen);
+
+            // 로그 필터링
             if (lastLoggedPacket == null || !packet.SequenceEqual(lastLoggedPacket))
             {
-                Log($"📥 수신: {packetString}", Color.DarkGreen);
-                lastLoggedPacket = packet; // 마지막 로그 값을 현재 값으로 업데이트
+                string logPrefix = isSimulation ? "📥 수신 (시뮬레이션):" : "📥 수신:";
+                Log($"{logPrefix} {packetString}", Color.DarkGreen);
+                lastLoggedPacket = packet;
             }
 
             UpdateAnalysisUI(packet);
@@ -567,6 +584,7 @@ namespace RS485_WinForms_Improved
             if (txtLog.InvokeRequired) { txtLog.Invoke((MethodInvoker)delegate { Log(message, color); }); }
             else
             {
+                if (txtLog.TextLength > 50000) txtLog.Clear(); // 로그 길이 관리
                 txtLog.SelectionStart = txtLog.TextLength;
                 txtLog.SelectionLength = 0;
                 txtLog.SelectionColor = color;
